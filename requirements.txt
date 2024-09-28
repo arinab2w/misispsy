@@ -1,2 +1,2 @@
 telebot
-csv
+unicodecsv==0.14.1
