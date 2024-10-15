@@ -1,4 +1,4 @@
 telebot
 unicodecsv==0.14.1
 gunicorn==19.7.1
-dotenv
+python-dotenv==0.10.1
