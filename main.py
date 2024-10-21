@@ -1,153 +1,119 @@
-import telebot
+import sqlite3
 import os
-import csv
-import random
+import tempfile
 import time
-from threading import Timer
-from dotenv import load_dotenv
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
+from flask import Flask, request
 
-# Хранилище таймеров для отслеживания неактивных пользователей
-user_timers = {}
+API_TOKEN = 'YOUR_TOKEN'
 
-def main():
-    load_dotenv()
-    bot = telebot.TeleBot(os.getenv('TOKEN'))
-    bot.set_webhook()
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
-    def add_companion_to_database(tg_id):
-        csv_file = 'data/users.csv'
-        exists = False
-        try:
-            with open(csv_file, 'r') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if not row:
-                        break
-                    if row[0] == str(tg_id):
-                        exists = True
-                        break
-            if not exists:
-                with open(csv_file, 'a', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([tg_id, '+'])
-        except IOError:
-            print("[!] Ошибка при открытии файла: " + csv_file)
+# Подключение к базе данных SQLite (вместо работы с CSV)
+conn = sqlite3.connect('users.db', check_same_thread=False)  # check_same_thread=False для работы с многопоточностью
+cursor = conn.cursor()
 
-    def find_companion_from_database(usr):
-        csv_file = 'data/users.csv'
-        values = []
-        try:
-            with open(csv_file, 'r', newline='') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    value1, value2 = row
-                    if value2 == "+":
-                        values.append(value1)
-        except IOError:
-            print("[!] Ошибка при открытии файла: " + csv_file)
-        if usr in values:
-            values.remove(usr)
-        if not values:
-            return "Empty"
-        return random.choice(values)
+# Создание таблицы пользователей (если она ещё не создана)
+cursor.execute('''CREATE TABLE IF NOT EXISTS users
+                  (user_id INTEGER PRIMARY KEY, name TEXT, stage TEXT)''')
+conn.commit()
 
-    def set_companion(usr1, usr2):
-        connections_file = 'data/users.csv'
-        try:
-            with open(connections_file, 'r', newline='') as f:
-                reader = csv.reader(f)
-                rows = list(reader)
-                for i, row in enumerate(rows):
-                    if row[0] == usr1:
-                        rows[i][1] = usr2
-                        break
-            with open(connections_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerows(rows)
-        except IOError:
-            print("[!] Ошибка при открытии файла: " + connections_file)
+# Кэш для хранения часто запрашиваемых данных
+user_cache = {}
 
-    def get_companion(usr):
-        connections_file = 'data/users.csv'
-        try:
-            with open(connections_file, 'r', newline='') as f:
-                reader = csv.reader(f)
-                rows = list(reader)
-                for i, row in enumerate(rows):
-                    if row[0] == usr:
-                        return rows[i][1]
-        except IOError:
-            print("[!] Ошибка при открытии файла: " + connections_file)
+# Функция для добавления нового пользователя в базу данных
+def add_user(user_id, name):
+    cursor.execute('INSERT INTO users (user_id, name, stage) VALUES (?, ?, ?)', (user_id, name, ''))
+    conn.commit()
 
-    def pause_user(user_id):
-        """Отметить пользователя как приостановленного."""
-        set_companion(user_id, 'paused')
-        bot.send_message(user_id, "Вы приостановили бота. Для продолжения нажмите /resume")
+# Функция для поиска пользователя в базе данных (с кэшированием)
+def find_user(user_id):
+    if user_id in user_cache:
+        return user_cache[user_id]
+    cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+    user = cursor.fetchone()
+    if user:
+        user_cache[user_id] = user  # Кэшируем данные пользователя
+    return user
 
-    def resume_user(user_id):
-        """Возобновить поиск собеседника."""
-        set_companion(user_id, '+')
-        bot.send_message(user_id, "Вы снова доступны для поиска собеседника. Нажмите кнопку 'Найти собеседника'")
+# Функция очистки временной папки от старых файлов
+def clean_temp_directory(directory='temp/', max_age=86400):  # Удаление файлов старше 1 дня
+    now = time.time()
+    for filename in os.listdir(directory):
+        file_path = os.path.join(directory, filename)
+        if os.stat(file_path).st_mtime < now - max_age:
+            os.remove(file_path)
 
-    def disconnect_user(user_id):
-        """Отключить пользователя за неактивность."""
-        old_companion = get_companion(user_id)
-        if old_companion and old_companion != "+" and old_companion != 'paused':
-            bot.send_message(old_companion, "Ваш собеседник был отключен за неактивность.")
-            set_companion(old_companion, '+')
-        set_companion(user_id, '+')
-        bot.send_message(user_id, "Вы были отключены за неактивность.")
+# Обработчик команды /start
+@dp.message_handler(commands=['start'])
+async def start_handler(message: types.Message):
+    user_id = message.from_user.id
+    name = message.from_user.first_name
+    if not find_user(user_id):  # Если пользователь не найден, добавляем
+        add_user(user_id, name)
+        await message.reply(f"Привет, {name}! Ты добавлен в базу данных.")
+    else:
+        await message.reply(f"Привет снова, {name}!")
 
-    def reset_timer(user_id):
-        """Перезапустить таймер активности пользователя."""
-        if user_id in user_timers:
-            user_timers[user_id].cancel()
-        timer = Timer(600, disconnect_user, [user_id])  # 10 минут
-        timer.start()
-        user_timers[user_id] = timer
+# Обработка голосового сообщения (пример использования временных файлов)
+@dp.message_handler(content_types=['voice'])
+async def handle_voice(message: types.Message):
+    file_info = await bot.get_file(message.voice.file_id)
+    file_path = file_info.file_path
 
-    @bot.message_handler(commands=['start', 'pause', 'resume'])
-    def handle_commands(message):
-        if message.text == '/start':
-            add_companion_to_database(message.from_user.id)
-            keyboard = telebot.types.InlineKeyboardMarkup()
-            keyboard.row(
-                telebot.types.InlineKeyboardButton("Найти собеседника", callback_data="find_companion")
-            )
-            bot.send_message(message.chat.id, "Привет! Нажмите кнопку \"Найти собеседника\" для начала общения.", reply_markup=keyboard)
-            reset_timer(message.from_user.id)
+    # Создание временного файла для сохранения голосового сообщения
+    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    downloaded_file = await bot.download_file(file_path)
+    temp_file.write(downloaded_file.read())
+    temp_file_path = temp_file.name
+    temp_file.close()
 
-        elif message.text == '/pause':
-            pause_user(message.chat.id)
+    # Тут можно добавить обработку голосового файла
 
-        elif message.text == '/resume':
-            resume_user(message.chat.id)
-            reset_timer(message.chat.id)
+    # Удаление временного файла после использования
+    os.remove(temp_file_path)
 
-    @bot.message_handler(content_types=['text'])
-    def handle_text(message):
-        companion = get_companion(str(message.chat.id))
-        if companion != '+' and companion != 'paused':
-            bot.send_message(int(companion), message.text)
-            reset_timer(message.chat.id)
-        else:
-            bot.send_message(message.chat.id, "На данный момент Вы не состоите в диалоге.")
+    await message.reply("Ваше голосовое сообщение обработано.")
 
-    # Обработка нажатий на кнопки
-    @bot.callback_query_handler(func=lambda call: True)
-    def handle_callback_query(call):
-        if call.data == "find_companion":
-            companion = find_companion_from_database(str(call.message.chat.id))
-            if companion == "Empty":
-                bot.send_message(call.message.chat.id, "К сожалению, свободных собеседников нет.")
-            else:
-                set_companion(str(call.message.chat.id), companion)
-                set_companion(companion, str(call.message.chat.id))
-                bot.send_message(call.message.chat.id, "Собеседник найден!")
-                bot.send_message(companion, "Собеседник найден!")
-                reset_timer(call.message.chat.id)
+# Обработчик фото (пример аналогичен голосовому)
+@dp.message_handler(content_types=['photo'])
+async def handle_photo(message: types.Message):
+    photo_info = message.photo[-1]  # Берём фото наивысшего качества
+    file_info = await bot.get_file(photo_info.file_id)
+    file_path = file_info.file_path
 
-    bot.infinity_polling()
+    # Создание временного файла для сохранения фото
+    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    downloaded_file = await bot.download_file(file_path)
+    temp_file.write(downloaded_file.read())
+    temp_file_path = temp_file.name
+    temp_file.close()
 
-if __name__ == "__main__":
-    main()
+    # Тут можно добавить обработку изображения
+
+    # Удаление временного файла после использования
+    os.remove(temp_file_path)
+
+    await message.reply("Ваше фото обработано.")
+
+# Установка webhook (вместо long polling)
+app = Flask(__name__)
+
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    update = types.Update.de_json(request.stream.read().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "OK", 200
+
+# Настройка webhook при запуске
+async def on_startup(dp):
+    await bot.set_webhook('https://yourdomain.com/webhook')
+
+# Очистка временной папки каждый раз при старте
+clean_temp_directory()
+
+if __name__ == '__main__':
+    # Запуск Flask сервера и Telegram бота
+    executor.start_polling(dp, skip_updates=True)
