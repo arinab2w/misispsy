@@ -1,120 +1,96 @@
-import logging
-from telegram import Update, InputFile
+from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from const import TOKEN
-import random
 import time
-from threading import Timer
 
-# Настройка логирования
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Хранение состояния пользователей
+# Здесь храним информацию о текущих чатах
+active_chats = {}
 waiting_users = []
-connected_users = {}
 
-# Таймеры для отключения пользователей по тайм-ауту
-timers = {}
-
-# Время ожидания в секундах
-MAX_WAIT_TIME = 600  # 10 минут
-MAX_INACTIVITY_TIME = 600  # 10 минут молчания
-
+# Функция для начала поиска собеседника
 def start(update: Update, context: CallbackContext):
-    user_id = update.message.chat_id
-    if user_id in connected_users:
-        update.message.reply_text("Вы уже подключены к собеседнику. Введите /stop для отключения.")
-    else:
-        update.message.reply_text("Поиск собеседника...")
-        waiting_users.append(user_id)
-        match_users(context)
-
-def stop(update: Update, context: CallbackContext):
-    user_id = update.message.chat_id
-    if user_id in connected_users:
-        disconnect_user(user_id, context, notify_partner=True)
-        update.message.reply_text("Вы отключены. Начинается поиск нового собеседника...")
-        start(update, context)
-    else:
-        update.message.reply_text("Вы не подключены к собеседнику.")
-
-def match_users(context: CallbackContext):
-    while len(waiting_users) >= 2:
-        user1 = waiting_users.pop(0)
-        user2 = waiting_users.pop(0)
-        connected_users[user1] = user2
-        connected_users[user2] = user1
-        
-        context.bot.send_message(user1, "Вы подключены к собеседнику.")
-        context.bot.send_message(user2, "Вы подключены к собеседнику.")
-        
-        # Устанавливаем таймер на отключение при молчании
-        set_inactivity_timer(user1, context)
-        set_inactivity_timer(user2, context)
-
-def set_inactivity_timer(user_id, context):
-    if user_id in timers:
-        timers[user_id].cancel()
+    user_id = update.message.from_user.id
+    if user_id in active_chats:
+        update.message.reply_text("Вы уже находитесь в чате.")
+        return
     
-    timers[user_id] = Timer(MAX_INACTIVITY_TIME, disconnect_user, [user_id, context])
-    timers[user_id].start()
-
-def disconnect_user(user_id, context, notify_partner=False):
-    if user_id in connected_users:
-        partner_id = connected_users.pop(user_id)
-        connected_users.pop(partner_id, None)
+    if waiting_users:
+        # Если есть кто-то в ожидании, соединяем пользователей
+        partner_id = waiting_users.pop(0)
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
         
-        if notify_partner:
-            context.bot.send_message(partner_id, "Ваш собеседник отключился. Поиск нового...")
-            # Отправка изображения при прерывании
-            with open('телега.jpg', 'rb') as img:
-                context.bot.send_photo(chat_id=partner_id, photo=InputFile(img), caption="Ищем нового собеседника...")
-            waiting_users.append(partner_id)
-            match_users(context)
-
-def handle_message(update: Update, context: CallbackContext):
-    user_id = update.message.chat_id
-    if user_id in connected_users:
-        partner_id = connected_users[user_id]
-        if partner_id:
-            # Пересылаем сообщение собеседнику
-            if update.message.text:
-                context.bot.send_message(partner_id, update.message.text)
-            elif update.message.photo:
-                context.bot.send_photo(partner_id, update.message.photo[-1].file_id)
-            elif update.message.document:
-                context.bot.send_document(partner_id, update.message.document.file_id)
-            
-            # Обновляем таймер молчания
-            set_inactivity_timer(user_id, context)
-            set_inactivity_timer(partner_id, context)
+        context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
+        update.message.reply_text("Найден собеседник!")
     else:
-        update.message.reply_text("Собеседник пока не найден. Подождите.")
+        # Если нет никого в ожидании, добавляем пользователя в список ожидания
+        waiting_users.append(user_id)
+        update.message.reply_text("Ищем собеседника, подождите...")
+        
+        # Ограничение поиска собеседника на 10 минут
+        context.job_queue.run_once(time_up, 600, context=user_id)
 
-def timeout_handler(context: CallbackContext):
+# Функция для завершения поиска после 10 минут ожидания
+def time_up(context: CallbackContext):
     user_id = context.job.context
     if user_id in waiting_users:
         waiting_users.remove(user_id)
-        context.bot.send_message(user_id, "Время ожидания истекло. Попробуйте снова позже.")
+        context.bot.send_message(chat_id=user_id, text="Время поиска истекло, собеседник не найден.")
 
-def error(update: Update, context: CallbackContext):
-    """Логирование ошибок"""
-    logger.warning(f'Update {update} caused error {context.error}')
+# Функция для отправки сообщений
+def message(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    if user_id not in active_chats:
+        update.message.reply_text("Вы не в чате, используйте /start, чтобы начать.")
+        return
 
+    partner_id = active_chats[user_id]
+    context.bot.send_message(chat_id=partner_id, text=update.message.text)
+
+# Функция для отключения и поиска нового собеседника
+def next(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    if user_id not in active_chats:
+        update.message.reply_text("Вы не в чате. Используйте /start, чтобы начать.")
+        return
+
+    partner_id = active_chats.pop(user_id)
+    active_chats.pop(partner_id, None)
+
+    # Уведомляем пользователей об окончании чата
+    context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат. Используйте /start, чтобы найти нового собеседника.")
+    update.message.reply_text("Чат завершен. Ищем нового собеседника...")
+
+    # Начинаем новый поиск для пользователя
+    start(update, context)
+
+# Функция для завершения чата вручную
+def stop(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    if user_id not in active_chats:
+        update.message.reply_text("Вы не в чате.")
+        return
+
+    partner_id = active_chats.pop(user_id)
+    active_chats.pop(partner_id, None)
+
+    context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат.")
+    update.message.reply_text("Чат завершен.")
+
+# Основная функция для запуска бота
 def main():
-    # Создаем бота
     updater = Updater(TOKEN, use_context=True)
-    
-    # Регистрация обработчиков
+
     dp = updater.dispatcher
-    
+
+    # Обработчики команд
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("next", next))
     dp.add_handler(CommandHandler("stop", stop))
-    dp.add_handler(MessageHandler(Filters.text | Filters.photo | Filters.document, handle_message))
-    
-    dp.add_error_handler(error)
-    
+
+    # Обработчик текстовых сообщений
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, message))
+
     # Запуск бота
     updater.start_polling()
     updater.idle()
