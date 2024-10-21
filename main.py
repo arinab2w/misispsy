@@ -1,7 +1,6 @@
 import logging
 from telegram import Update
 from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, CallbackContext)
-from telegram.error import BadRequest
 from const import TOKEN
 import random
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -44,7 +43,6 @@ def connect_users(user_id, partner_id, context):
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
 
-        # Не упоминаем имен пользователей
         context.bot.send_message(chat_id=user_id, text="Найден собеседник!")
         context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
 
@@ -90,15 +88,21 @@ def next(update: Update, context: CallbackContext) -> None:
     context.bot.send_message(chat_id=user_id, text="Ищем нового собеседника...")
     start_search_for_partner(user_id, context)
 
-# Обработка входящих сообщений и пересылка их собеседнику
+# Обработка текстовых сообщений и отправка их собеседнику
 def forward_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        # Пересылаем сообщение как текст без указания отправителя
+        # Пересылаем текстовое сообщение без указания отправителя
         context.bot.send_message(chat_id=partner_id, text=update.message.text)
 
-        # Если сообщение фото или другое мультимедиа
+# Обработка мультимедиа и отправка его собеседнику
+def forward_media(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        
+        # Пересылаем фото или другое мультимедиа без указания отправителя
         if update.message.photo:
             context.bot.send_photo(chat_id=partner_id, photo=update.message.photo[-1].file_id)
         elif update.message.video:
@@ -107,36 +111,6 @@ def forward_message(update: Update, context: CallbackContext) -> None:
             context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
         elif update.message.voice:
             context.bot.send_voice(chat_id=partner_id, voice=update.message.voice.file_id)
-
-# Отправка фото после отключения
-def send_photo_to_user(context, user_id, photo_path):
-    message = context.bot.send_photo(chat_id=user_id, photo=open(photo_path, 'rb'))
-    message_id = message.message_id
-    context.job_queue.run_once(delete_photo, 10, context={'chat_id': user_id, 'message_id': message_id})
-
-def delete_photo(context: CallbackContext) -> None:
-    chat_id = context.job.context.get('chat_id')
-    message_id = context.job.context.get('message_id')
-    try:
-        context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-    except BadRequest as e:
-        logger.warning(f"Ошибка при удалении фото: {e}")
-
-# Отключение собеседника с отправкой фото
-def end_chat_and_send_photo(update: Update, context: CallbackContext) -> None:
-    user_id = update.message.chat_id
-    if user_id in active_chats:
-        partner_id = active_chats[user_id]
-        
-        send_photo_to_user(context, partner_id, 'телега.jpg')
-
-        disconnect_users(user_id, partner_id, context)
-
-        context.bot.send_message(chat_id=user_id, text="Собеседник завершил беседу, ищем нового собеседника.")
-        context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил беседу.")
-
-        waiting_users.append(user_id)
-        waiting_users.append(partner_id)
 
 # Основная функция для запуска бота
 def main() -> None:
@@ -148,9 +122,11 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("stop", stop))
     dispatcher.add_handler(CommandHandler("next", next))
 
-    # Обработка сообщений
+    # Обработка текстовых сообщений
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_message))
-    dispatcher.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.sticker | Filters.voice, forward_message))
+
+    # Обработка мультимедиа
+    dispatcher.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.sticker | Filters.voice, forward_media))
 
     # Запускаем бота
     updater.start_polling()
