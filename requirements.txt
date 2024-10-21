@@ -1,5 +1,5 @@
 telebot
-aiogram==3.0.0
+aiogram
 Flask
 gunicorn
 python-dotenv
