@@ -1,125 +1,146 @@
-from telegram import Update, InputMediaPhoto
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import logging
+from telegram import Update
+from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, CallbackContext)
+from telegram.error import BadRequest
 from const import TOKEN
-import time
+import random
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# Словарь для хранения текущих чатов
-active_chats = {}
+# Включаем логирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Списки для ожидания и активных чатов
 waiting_users = []
+active_chats = {}
 
-# Путь к фото для отправки при завершении чата
-PHOTO_PATH = 'телега.jpg'
+# Устанавливаем лимит на ожидание собеседника и беседу без активности (10 минут = 600 секунд)
+TIME_LIMIT = 600
 
-# Функция для начала поиска собеседника
-def start(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
+# Функция для старта поиска собеседника
+def start(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    
     if user_id in active_chats:
-        update.message.reply_text("Вы уже находитесь в чате.")
-        return
+        context.bot.send_message(chat_id=user_id, text="Вы уже общаетесь с собеседником.")
+    else:
+        context.bot.send_message(chat_id=user_id, text="Ищем собеседника...")
+        start_search_for_partner(user_id, context)
 
+# Функция поиска собеседника
+def start_search_for_partner(user_id, context):
     if waiting_users and waiting_users[0] != user_id:
-        # Если есть кто-то в ожидании и это не сам пользователь
         partner_id = waiting_users.pop(0)
+        connect_users(user_id, partner_id, context)
+    else:
+        waiting_users.append(user_id)
+
+# Соединение двух пользователей
+def connect_users(user_id, partner_id, context):
+    if user_id not in active_chats and partner_id not in active_chats:
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
-        
+
+        context.bot.send_message(chat_id=user_id, text="Найден собеседник!")
         context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
-        update.message.reply_text("Найден собеседник!")
+
+        # Сбрасываем таймеры через 10 минут
+        context.job_queue.run_once(disconnect_due_to_timeout, TIME_LIMIT, context={'user_id': user_id, 'partner_id': partner_id})
     else:
-        # Если никого нет в очереди, добавляем пользователя в ожидание
-        waiting_users.append(user_id)
-        update.message.reply_text("Ищем собеседника, подождите...")
+        context.bot.send_message(chat_id=user_id, text="Ошибка соединения. Повторите попытку.")
+
+# Отключение собеседников по таймеру
+def disconnect_due_to_timeout(context: CallbackContext) -> None:
+    user_id = context.job.context['user_id']
+    partner_id = context.job.context['partner_id']
+
+    if user_id in active_chats and active_chats[user_id] == partner_id:
+        disconnect_users(user_id, partner_id, context)
+
+# Отключение двух пользователей
+def disconnect_users(user_id, partner_id, context):
+    del active_chats[user_id]
+    del active_chats[partner_id]
+
+    context.bot.send_message(chat_id=user_id, text="Собеседник отключен.")
+    context.bot.send_message(chat_id=partner_id, text="Собеседник отключен.")
+
+    waiting_users.append(user_id)
+    waiting_users.append(partner_id)
+
+# Команда /stop для прекращения чата
+def stop(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        disconnect_users(user_id, partner_id, context)
+    else:
+        context.bot.send_message(chat_id=user_id, text="Вы не находитесь в чате.")
+
+# Команда /next для поиска нового собеседника
+def next(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        disconnect_users(user_id, partner_id, context)
+    context.bot.send_message(chat_id=user_id, text="Ищем нового собеседника...")
+    start_search_for_partner(user_id, context)
+
+# Обработка входящих сообщений и пересылка их собеседнику
+def forward_message(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        context.bot.forward_message(chat_id=partner_id, from_chat_id=user_id, message_id=update.message.message_id)
+
+# Отправка фото после отключения
+def send_photo_to_user(context, user_id, photo_path):
+    message = context.bot.send_photo(chat_id=user_id, photo=open(photo_path, 'rb'))
+    message_id = message.message_id
+    context.job_queue.run_once(delete_photo, 10, context={'chat_id': user_id, 'message_id': message_id})
+
+def delete_photo(context: CallbackContext) -> None:
+    chat_id = context.job.context.get('chat_id')
+    message_id = context.job.context.get('message_id')
+    try:
+        context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except BadRequest as e:
+        logger.warning(f"Ошибка при удалении фото: {e}")
+
+# Отключение собеседника с отправкой фото
+def end_chat_and_send_photo(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
         
-        # Ограничение поиска на 10 минут
-        context.job_queue.run_once(time_up, 600, context=user_id)
+        send_photo_to_user(context, partner_id, 'телега.jpg')
 
-# Функция для завершения поиска после 10 минут
-def time_up(context: CallbackContext):
-    user_id = context.job.context
-    if user_id in waiting_users:
-        waiting_users.remove(user_id)
-        context.bot.send_message(chat_id=user_id, text="Время поиска истекло, собеседник не найден.")
+        disconnect_users(user_id, partner_id, context)
 
-# Функция для отправки сообщений, фото, видео и т.д.
-def handle_message(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
-    if user_id not in active_chats:
-        update.message.reply_text("Вы не в чате. Используйте /start, чтобы найти собеседника.")
-        return
+        context.bot.send_message(chat_id=user_id, text="Собеседник завершил беседу, ищем нового собеседника.")
+        context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил беседу.")
 
-    partner_id = active_chats[user_id]
-    
-    # Пересылаем различные типы сообщений собеседнику
-    if update.message.text:
-        context.bot.send_message(chat_id=partner_id, text=update.message.text)
-    elif update.message.photo:
-        context.bot.send_photo(chat_id=partner_id, photo=update.message.photo[-1].file_id)
-    elif update.message.video:
-        context.bot.send_video(chat_id=partner_id, video=update.message.video.file_id)
-    elif update.message.sticker:
-        context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
-    elif update.message.voice:
-        context.bot.send_voice(chat_id=partner_id, voice=update.message.voice.file_id)
-
-# Функция для смены собеседника
-def next(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
-    if user_id not in active_chats:
-        update.message.reply_text("Вы не в чате. Используйте /start, чтобы начать.")
-        return
-
-    partner_id = active_chats.pop(user_id)
-    active_chats.pop(partner_id, None)
-
-    # Уведомляем собеседника и отправляем ему фото
-    context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат.")
-    context.bot.send_photo(chat_id=partner_id, photo=open(PHOTO_PATH, 'rb'))
-    
-    # Уведомляем пользователя, завершившего чат
-    update.message.reply_text("Чат завершен. Ищем нового собеседника...")
-
-    # Удаляем фото через 10 секунд
-    context.job_queue.run_once(delete_photo, 10, context={'chat_id': partner_id})
-
-    # Начинаем поиск нового собеседника
-    start(update, context)
-
-# Функция для удаления фото
-def delete_photo(context: CallbackContext):
-    chat_id = context.job.context['chat_id']
-    context.bot.delete_message(chat_id=chat_id, message_id=context.job.context.get('message_id'))
-
-# Функция для завершения чата вручную
-def stop(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
-    if user_id not in active_chats:
-        update.message.reply_text("Вы не в чате.")
-        return
-
-    partner_id = active_chats.pop(user_id)
-    active_chats.pop(partner_id, None)
-
-    # Уведомляем собеседника и отправляем фото
-    context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат.")
-    context.bot.send_photo(chat_id=partner_id, photo=open(PHOTO_PATH, 'rb'))
-
-    update.message.reply_text("Чат завершен.")
+        waiting_users.append(user_id)
+        waiting_users.append(partner_id)
 
 # Основная функция для запуска бота
-def main():
+def main() -> None:
     updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
 
-    dp = updater.dispatcher
+    # Команды
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("stop", stop))
+    dispatcher.add_handler(CommandHandler("next", next))
 
-    # Обработчики команд
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("next", next))
-    dp.add_handler(CommandHandler("stop", stop))
+    # Обработка сообщений
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_message))
+    dispatcher.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.sticker | Filters.voice, forward_message))
 
-    # Обработчики сообщений (текст, медиа)
-    dp.add_handler(MessageHandler(Filters.text | Filters.photo | Filters.video | Filters.sticker | Filters.voice, handle_message))
-
-    # Запуск бота
+    # Запускаем бота
     updater.start_polling()
     updater.idle()
 
