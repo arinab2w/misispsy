@@ -6,8 +6,13 @@ from dotenv import load_dotenv
 
 def main():
     load_dotenv()
-    bot = os.getenv('TOKEN')
-    bot.set_webhook()
+    token = os.getenv('TOKEN')
+    
+    # Create an instance of the TeleBot
+    bot = telebot.TeleBot(token)
+
+    # Remove the set_webhook call if you're using polling
+    # If you need to set a webhook, use bot.set_webhook(url='YOUR_WEBHOOK_URL')
 
     def add_companion_to_database(tg_id):
         csv_file = 'data/users.csv'
@@ -210,8 +215,10 @@ def main():
                 set_companion(companion, str(call.message.chat.id))
                 bot.send_message(call.message.chat.id, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
                 bot.send_message(companion, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
-                print("Пользователь ID:"+str(call.message.chat.id)+" нашел собеседника ID:"+str(companion))
-    bot.infinity_polling()
+                print("Пользователь ID:" + str(call.message.chat.id) + " нашел собеседника ID:" + str(companion))
+
+    # Start polling for messages
+    bot.polling(none_stop=True)
 
 if __name__ == "__main__":
-    main() 
+    main()
