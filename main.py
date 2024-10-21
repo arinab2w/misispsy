@@ -3,11 +3,11 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from const import TOKEN
 import time
 
-# Здесь храним информацию о текущих чатах
+# Словарь для хранения текущих чатов
 active_chats = {}
 waiting_users = []
 
-# Путь к фото, которую нужно отправить при завершении чата
+# Путь к фото для отправки при завершении чата
 PHOTO_PATH = 'телега.jpg'
 
 # Функция для начала поиска собеседника
@@ -16,9 +16,9 @@ def start(update: Update, context: CallbackContext):
     if user_id in active_chats:
         update.message.reply_text("Вы уже находитесь в чате.")
         return
-    
-    if waiting_users:
-        # Если есть кто-то в ожидании, соединяем пользователей
+
+    if waiting_users and waiting_users[0] != user_id:
+        # Если есть кто-то в ожидании и это не сам пользователь
         partner_id = waiting_users.pop(0)
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
@@ -26,31 +26,42 @@ def start(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
         update.message.reply_text("Найден собеседник!")
     else:
-        # Если нет никого в ожидании, добавляем пользователя в список ожидания
+        # Если никого нет в очереди, добавляем пользователя в ожидание
         waiting_users.append(user_id)
         update.message.reply_text("Ищем собеседника, подождите...")
         
-        # Ограничение поиска собеседника на 10 минут
+        # Ограничение поиска на 10 минут
         context.job_queue.run_once(time_up, 600, context=user_id)
 
-# Функция для завершения поиска после 10 минут ожидания
+# Функция для завершения поиска после 10 минут
 def time_up(context: CallbackContext):
     user_id = context.job.context
     if user_id in waiting_users:
         waiting_users.remove(user_id)
         context.bot.send_message(chat_id=user_id, text="Время поиска истекло, собеседник не найден.")
 
-# Функция для отправки сообщений
-def message(update: Update, context: CallbackContext):
+# Функция для отправки сообщений, фото, видео и т.д.
+def handle_message(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     if user_id not in active_chats:
-        update.message.reply_text("Вы не в чате, используйте /start, чтобы начать.")
+        update.message.reply_text("Вы не в чате. Используйте /start, чтобы найти собеседника.")
         return
 
     partner_id = active_chats[user_id]
-    context.bot.send_message(chat_id=partner_id, text=update.message.text)
+    
+    # Пересылаем различные типы сообщений собеседнику
+    if update.message.text:
+        context.bot.send_message(chat_id=partner_id, text=update.message.text)
+    elif update.message.photo:
+        context.bot.send_photo(chat_id=partner_id, photo=update.message.photo[-1].file_id)
+    elif update.message.video:
+        context.bot.send_video(chat_id=partner_id, video=update.message.video.file_id)
+    elif update.message.sticker:
+        context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
+    elif update.message.voice:
+        context.bot.send_voice(chat_id=partner_id, voice=update.message.voice.file_id)
 
-# Функция для отключения и поиска нового собеседника
+# Функция для смены собеседника
 def next(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     if user_id not in active_chats:
@@ -60,23 +71,23 @@ def next(update: Update, context: CallbackContext):
     partner_id = active_chats.pop(user_id)
     active_chats.pop(partner_id, None)
 
-    # Уведомляем пользователей об окончании чата
-    context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат. Используйте /start, чтобы найти нового собеседника.")
-
-    # Отправляем картинку пользователю, завершившему чат
-    context.bot.send_photo(chat_id=user_id, photo=open(PHOTO_PATH, 'rb'))
+    # Уведомляем собеседника и отправляем ему фото
+    context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат.")
+    context.bot.send_photo(chat_id=partner_id, photo=open(PHOTO_PATH, 'rb'))
+    
+    # Уведомляем пользователя, завершившего чат
     update.message.reply_text("Чат завершен. Ищем нового собеседника...")
 
-    # Удаляем картинку через 10 секунд
-    context.job_queue.run_once(delete_photo, 10, context={'chat_id': user_id})
+    # Удаляем фото через 10 секунд
+    context.job_queue.run_once(delete_photo, 10, context={'chat_id': partner_id})
 
-    # Начинаем новый поиск для пользователя
+    # Начинаем поиск нового собеседника
     start(update, context)
 
-# Функция для удаления фото через 10 секунд
+# Функция для удаления фото
 def delete_photo(context: CallbackContext):
     chat_id = context.job.context['chat_id']
-    context.bot.delete_message(chat_id=chat_id, message_id=context.job.context['message_id'])
+    context.bot.delete_message(chat_id=chat_id, message_id=context.job.context.get('message_id'))
 
 # Функция для завершения чата вручную
 def stop(update: Update, context: CallbackContext):
@@ -88,12 +99,11 @@ def stop(update: Update, context: CallbackContext):
     partner_id = active_chats.pop(user_id)
     active_chats.pop(partner_id, None)
 
+    # Уведомляем собеседника и отправляем фото
     context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат.")
-    update.message.reply_text("Чат завершен.")
+    context.bot.send_photo(chat_id=partner_id, photo=open(PHOTO_PATH, 'rb'))
 
-    # Отправляем фото, если диалог был завершен
-    context.bot.send_photo(chat_id=user_id, photo=open(PHOTO_PATH, 'rb'))
-    context.job_queue.run_once(delete_photo, 10, context={'chat_id': user_id})
+    update.message.reply_text("Чат завершен.")
 
 # Основная функция для запуска бота
 def main():
@@ -106,8 +116,8 @@ def main():
     dp.add_handler(CommandHandler("next", next))
     dp.add_handler(CommandHandler("stop", stop))
 
-    # Обработчик текстовых сообщений
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, message))
+    # Обработчики сообщений (текст, медиа)
+    dp.add_handler(MessageHandler(Filters.text | Filters.photo | Filters.video | Filters.sticker | Filters.voice, handle_message))
 
     # Запуск бота
     updater.start_polling()
