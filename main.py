@@ -2,30 +2,12 @@ import telebot
 import os
 import csv
 import random
-import threading
-import time
 from dotenv import load_dotenv
-
-# Хранение времени последней активности пользователей
-last_active_time = {}
 
 def main():
     load_dotenv()
-    bot = telebot.TeleBot(os.getenv('TOKEN'))
-    
-    # Функция для проверки неактивных пользователей каждые 10 минут
-    def check_inactivity():
-        while True:
-            current_time = time.time()
-            for tg_id, last_time in list(last_active_time.items()):
-                if current_time - last_time > 600:  # 600 секунд = 10 минут
-                    update_status(tg_id, "inactive")
-                    last_active_time.pop(tg_id)
-                    bot.send_message(tg_id, "Вы были исключены из чата за неактивность.")
-            time.sleep(60)  # Проверяем раз в минуту
-
-    # Запуск проверки неактивных пользователей в отдельном потоке
-    threading.Thread(target=check_inactivity, daemon=True).start()
+    bot = os.getenv('TOKEN')
+    bot.set_webhook()
 
     def add_companion_to_database(tg_id):
         csv_file = 'data/users.csv'
@@ -85,7 +67,6 @@ def main():
     def handle_start(message):
         add_companion_to_database(message.from_user.id)
         name = message.from_user.first_name
-        last_active_time[message.from_user.id] = time.time()  # Сохраняем время активности
         keyboard = telebot.types.InlineKeyboardMarkup()
         keyboard.row(
             telebot.types.InlineKeyboardButton("Найти собеседника", callback_data="find_companion")
@@ -100,7 +81,6 @@ def main():
     @bot.message_handler(commands=['resume'])
     def handle_resume(message):
         update_status(message.from_user.id, "active")
-        last_active_time[message.from_user.id] = time.time()  # Обновляем время активности
         bot.send_message(message.chat.id, "Поиск собеседников возобновлен.")
 
     @bot.message_handler(commands=['change'])
@@ -119,7 +99,6 @@ def main():
             set_companion(companion, str(message.chat.id))
             bot.send_message(message.chat.id, "Собеседник найден!")
             bot.send_message(companion, "Собеседник найден!")
-        last_active_time[message.from_user.id] = time.time()  # Обновляем время активности
 
     @bot.callback_query_handler(func=lambda call: call.data == "find_companion")
     def handle_find_companion(call):
@@ -131,13 +110,7 @@ def main():
             set_companion(companion, str(call.message.chat.id))
             bot.send_message(call.message.chat.id, "Собеседник найден!")
             bot.send_message(companion, "Собеседник найден!")
-        last_active_time[call.message.chat.id] = time.time()  # Обновляем время активности
-
-    # Обрабатываем любые сообщения и обновляем время последней активности
-    @bot.message_handler(func=lambda message: True)
-    def handle_all_messages(message):
-        last_active_time[message.from_user.id] = time.time()  # Обновляем время активности
-
+    
     bot.infinity_polling()
 
 if __name__ == "__main__":
