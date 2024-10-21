@@ -3,10 +3,22 @@ import os
 import csv
 import random
 import const
+import threading
+import time
 
 bot = telebot.TeleBot(const.TOKEN)
 bot.set_webhook()
 
+# Хранение времени последней активности пользователя
+user_activity = {}
+
+# Максимальное время неактивности в секундах (10 минут = 600 секунд)
+INACTIVITY_TIMEOUT = 600
+
+# Флаг для остановки бота
+stop_bot = False
+
+# Добавляем пользователя в базу
 def add_companion_to_database(tg_id):
     csv_file = 'data/users.csv'
     exists = False
@@ -23,6 +35,7 @@ def add_companion_to_database(tg_id):
             writer = csv.writer(f)
             writer.writerow([tg_id, '+'])
 
+# Поиск свободного собеседника
 def find_companion_from_database(usr):
     csv_file = 'data/users.csv'
     values = []
@@ -38,9 +51,9 @@ def find_companion_from_database(usr):
         return "Empty"
     return random.choice(values)
 
+# Установка собеседника
 def set_companion(usr1, usr2):
     connections_file = 'data/users.csv'
-
     with open(connections_file, 'r', newline='') as f:
         reader = csv.reader(f)
         rows = list(reader)
@@ -48,14 +61,13 @@ def set_companion(usr1, usr2):
             if row[0] == usr1:
                 rows[i][1] = usr2
                 break
-
     with open(connections_file, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerows(rows)
 
+# Получение текущего собеседника
 def get_companion(usr):
     connections_file = 'data/users.csv'
-
     with open(connections_file, 'r', newline='') as f:
         reader = csv.reader(f)
         rows = list(reader)
@@ -63,13 +75,31 @@ def get_companion(usr):
             if row[0] == usr:
                 return rows[i][1]
 
+# Функция для завершения общения по истечении времени
+def check_inactivity():
+    while not stop_bot:
+        current_time = time.time()
+        for user_id, last_active in list(user_activity.items()):
+            if current_time - last_active > INACTIVITY_TIMEOUT:
+                bot.send_message(user_id, "Вы были отключены за неактивность.")
+                set_companion(user_id, '+')
+                del user_activity[user_id]
+        time.sleep(10)
+
+# Обработка текстовых сообщений
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
+    global stop_bot
     if message.text == '/start':
         handle_start(message)
     elif message.text == '/change':
         handle_change(message)
+    elif message.text == '/stop':
+        bot.send_message(message.chat.id, "Бот отключается. Спасибо за использование!")
+        stop_bot = True
+        bot.stop_polling()  # Остановка поллинга
     else:
+        update_user_activity(message.chat.id)
         if get_companion(str(message.chat.id)) != '+':
             msg = message.text
             companion = get_companion(str(message.chat.id))
@@ -77,71 +107,11 @@ def handle_text(message):
         else:
             bot.send_message(message.chat.id, "На данный момент Вы не состоите в диалоге")
 
-@bot.message_handler(content_types=['photo'])
-def handle_photo(message):
-    if message.photo:
-        companion = get_companion(str(message.chat.id))
-        file_info = bot.get_file(message.photo[len(message.photo) - 1].file_id)
-        user_id = message.from_user.username
-        downloaded_file = bot.download_file(file_info.file_path)
-        src = 'temp/photos/' + user_id + '.jpg'
-        with open(src, 'wb') as new_file:
-            new_file.write(downloaded_file)
-        bot.send_photo(int(companion), photo=open(src, "rb"))
-        os.remove(src)
+# Функция обновления активности пользователя
+def update_user_activity(user_id):
+    user_activity[user_id] = time.time()
 
-@bot.message_handler(content_types=['video'])
-def handle_video(message):
-    if message.video:
-        companion = get_companion(str(message.chat.id))
-        file_info = bot.get_file(message.video.file_id)
-        user_id = message.from_user.username
-        downloaded_file = bot.download_file(file_info.file_path)
-        src = 'temp/videos/' + user_id + '.mp4'
-        with open(src, 'wb') as new_file:
-            new_file.write(downloaded_file)
-        bot.send_video(int(companion), video=open(src, "rb"))
-        os.remove(src)
-
-@bot.message_handler(content_types=['video_note'])
-def handle_video_note(message):
-    if message.video_note:
-        companion = get_companion(str(message.chat.id))
-        file_info = bot.get_file(message.video_note.file_id)
-        user_id = message.from_user.username
-        downloaded_file = bot.download_file(file_info.file_path)
-        src = 'temp/videos/' + user_id + '.mp4'
-        with open(src, 'wb') as new_file:
-            new_file.write(downloaded_file)
-        bot.send_video(int(companion), video=open(src, "rb"))
-        os.remove(src)
-
-@bot.message_handler(content_types=['voice'])
-def handle_voice(message):
-    if message.voice:
-        companion = get_companion(str(message.chat.id))
-        file_info = bot.get_file(message.voice.file_id)
-        user_id = message.from_user.username
-        downloaded_file = bot.download_file(file_info.file_path)
-        src = 'temp/audio/' + user_id + '.ogg'
-        with open(src, 'wb') as new_file:
-            new_file.write(downloaded_file)
-        bot.send_voice(int(companion), voice=open(src, "rb"))
-        os.remove(src)
-
-@bot.message_handler(content_types=['sticker'])
-def handle_sticker(message):
-    if message.sticker:
-        companion = get_companion(str(message.chat.id))
-        file_info = bot.get_file(message.sticker.file_id)
-        user_id = message.from_user.username
-        downloaded_file = bot.download_file(file_info.file_path)
-        src = 'temp/stickers/' + user_id + '.webp'
-        with open(src, 'wb') as new_file:
-            new_file.write(downloaded_file)
-        bot.send_sticker(int(companion), sticker=open(src, "rb"))
-        os.remove(src)
-
+# Обработка команды /start
 def handle_start(message):
     add_companion_to_database(message.from_user.id)
     name = message.from_user.first_name
@@ -149,11 +119,14 @@ def handle_start(message):
     keyboard.row(
         telebot.types.InlineKeyboardButton("Найти собеседника", callback_data="find_companion")
     )
-    bot.send_message(message.chat.id, "Привет, "+name+"!\n\nС помощью этого бота ты сможешь связаться с любым человеком абсолютно анонимно!\n\nНажмите кнопку \"Найти собеседника\" для того, чтобы начать общение!", reply_markup=keyboard)
+    bot.send_message(message.chat.id, f"Привет, {name}!\n\nНажмите кнопку \"Найти собеседника\" для того, чтобы начать общение!", reply_markup=keyboard)
+    update_user_activity(message.from_user.id)
 
+# Обработка команды /change
 def handle_change(message):
     old = get_companion(str(message.chat.id))
-    bot.send_message(int(old), "С Вами больше не общаются. Вы можете найти нового собеседника, введя команду /change")
+    if old != '+':
+        bot.send_message(int(old), "С Вами больше не общаются. Вы можете найти нового собеседника, введя команду /change")
     companion = find_companion_from_database(str(message.chat.id))
     set_companion(old, '+')
     if companion == "Empty":
@@ -162,19 +135,13 @@ def handle_change(message):
     else:
         set_companion(str(message.chat.id), companion)
         set_companion(companion, str(message.chat.id))
-        bot.send_message(message.chat.id, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
-        bot.send_message(companion, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
+        bot.send_message(message.chat.id, "Собеседник найден!\n\nНапишите сообщение.")
+        bot.send_message(companion, "Собеседник найден!\n\nНапишите сообщение.")
+    update_user_activity(message.chat.id)
 
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callback_query(call):
-    if call.data == "find_companion":
-        companion = find_companion_from_database(str(call.message.chat.id))
-        if companion == "Empty":
-            bot.send_message(call.message.chat.id, "К сожалению, свободных собеседников нет")
-        else:
-            set_companion(str(call.message.chat.id), companion)
-            set_companion(companion, str(call.message.chat.id))
-            bot.send_message(call.message.chat.id, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
-            bot.send_message(companion, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
+# Запуск функции проверки неактивности пользователей в отдельном потоке
+inactivity_thread = threading.Thread(target=check_inactivity)
+inactivity_thread.start()
 
+# Запуск бота
 bot.infinity_polling()
