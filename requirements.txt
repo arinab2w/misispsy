@@ -1,6 +1,9 @@
 telebot
-unicodecsv==0.14.1
+aiogram==3.0.0
+Flask==2.3.3
 gunicorn==19.7.1
 python-dotenv==0.10.1
-aiogram==3.0.0  # 
-python-dotenv
+unicodecsv==0.14.1
+aiofiles==0.8.0
+sqlalchemy==1.4.47
+requests==2.28.1
