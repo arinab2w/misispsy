@@ -2,17 +2,12 @@ import telebot
 import os
 import csv
 import random
-import time
-from threading import Thread
 from dotenv import load_dotenv
 
 def main():
     load_dotenv()
-    token = os.getenv('TOKEN')
-    bot = telebot.TeleBot(token)
-    
-    active_users = {}
-    paused_users = set()
+    bot = os.getenv('TOKEN')
+    bot.set_webhook()
 
     def add_companion_to_database(tg_id):
         csv_file = 'data/users.csv'
@@ -86,10 +81,6 @@ def main():
     def handle_text(message):
         if message.text == '/start':
             handle_start(message)
-        elif message.text == '/pause':
-            handle_pause(message)
-        elif message.text == '/resume':
-            handle_resume(message)
         elif message.text == '/change':
             handle_change(message)
         else:
@@ -98,38 +89,89 @@ def main():
                 companion = get_companion(str(message.chat.id))
                 bot.send_message(int(companion), msg)
                 print("[#] Успешная отправка сообщения")
-                # Update the last active time for this user
-                active_users[message.chat.id] = time.time()
             else:
                 bot.send_message(message.chat.id, "На данный момент Вы не состоите в диалоге")
                 print("[#] Пользователь пытался отправить сообщение, не состоя в диалоге")
-
-    def handle_pause(message):
-        paused_users.add(message.chat.id)
-        bot.send_message(message.chat.id, "Вы приостановили бота. Вы можете продолжить в любой момент, используя команду /resume.")
-
-    def handle_resume(message):
-        paused_users.discard(message.chat.id)
-        bot.send_message(message.chat.id, "Вы возобновили работу бота. Вы можете снова искать собеседника.")
 
     @bot.message_handler(content_types=['photo'])
     def handle_photo(message):
         if message.photo:
             companion = get_companion(str(message.chat.id))
-            if companion not in paused_users:
-                file_info = bot.get_file(message.photo[len(message.photo) - 1].file_id)
-                user_id = message.from_user.username
-                downloaded_file = bot.download_file(file_info.file_path)
-                src = 'temp/photos/' + user_id + '.jpg'
-                try:
-                    with open(src, 'wb') as new_file:
-                        new_file.write(downloaded_file)
-                except IOError:
-                    print("[!] Ошибка при открытии файла: " + src)
-                bot.send_photo(int(companion), photo=open(src, "rb"))
-                os.remove(src)
+            file_info = bot.get_file(message.photo[len(message.photo) - 1].file_id)
+            user_id = message.from_user.username
+            downloaded_file = bot.download_file(file_info.file_path)
+            src = 'temp/photos/' + user_id + '.jpg'
+            try:
+                with open(src, 'wb') as new_file:
+                    new_file.write(downloaded_file)
+            except IOError:
+                print("[!] Ошибка при открытии файла: "+src)
+            bot.send_photo(int(companion), photo=open(src, "rb"))
+            os.remove(src)
 
-    # Implement similar handlers for video, voice, sticker, etc. 
+    @bot.message_handler(content_types=['video'])
+    def handle_video(message):
+        if message.video:
+            companion = get_companion(str(message.chat.id))
+            file_info = bot.get_file(message.video.file_id)
+            user_id = message.from_user.username
+            downloaded_file = bot.download_file(file_info.file_path)
+            src = 'temp/videos/' + user_id + '.mp4'
+            try:
+                with open(src, 'wb') as new_file:
+                    new_file.write(downloaded_file)
+            except IOError:
+                print("[!] Ошибка при открытии файла: "+src)
+            bot.send_video(int(companion), video=open(src, "rb"))
+            os.remove(src)
+
+    @bot.message_handler(content_types=['video_note'])
+    def handle_video_note(message):
+        if message.video_note:
+            companion = get_companion(str(message.chat.id))
+            file_info = bot.get_file(message.video_note.file_id)
+            user_id = message.from_user.username
+            downloaded_file = bot.download_file(file_info.file_path)
+            src = 'temp/videos/' + user_id + '.mp4'
+            try:
+                with open(src, 'wb') as new_file:
+                    new_file.write(downloaded_file)
+            except IOError:
+                print("[!] Ошибка при открытии файла: "+src)
+            bot.send_video(int(companion), video=open(src, "rb"))
+            os.remove(src)
+
+    @bot.message_handler(content_types=['voice'])
+    def handle_voice(message):
+        if message.voice:
+            companion = get_companion(str(message.chat.id))
+            file_info = bot.get_file(message.voice.file_id)
+            user_id = message.from_user.username
+            downloaded_file = bot.download_file(file_info.file_path)
+            src = 'temp/audio/' + user_id + '.ogg'
+            try:
+                with open(src, 'wb') as new_file:
+                    new_file.write(downloaded_file)
+            except IOError:
+                print("[!] Ошибка при открытии файла: "+src)
+            bot.send_voice(int(companion), voice=open(src, "rb"))
+            os.remove(src)
+
+    @bot.message_handler(content_types=['sticker'])
+    def handle_sticker(message):
+        if message.sticker:
+            companion = get_companion(str(message.chat.id))
+            file_info = bot.get_file(message.sticker.file_id)
+            user_id = message.from_user.username
+            downloaded_file = bot.download_file(file_info.file_path)
+            src = 'temp/stickers/' + user_id + '.webp'
+            try:
+                with open(src, 'wb') as new_file:
+                    new_file.write(downloaded_file)
+            except IOError:
+                print("[!] Ошибка при открытии файла: "+src)
+            bot.send_sticker(int(companion), sticker=open(src, "rb"))
+            os.remove(src)
 
     def handle_start(message):
         add_companion_to_database(message.from_user.id)
@@ -138,7 +180,7 @@ def main():
         keyboard.row(
             telebot.types.InlineKeyboardButton("Найти собеседника", callback_data="find_companion")
         )
-        bot.send_message(message.chat.id, "Привет, " + name + "!\n\nС помощью этого бота ты сможешь связаться с любым человеком абсолютно анонимно!\n\nНажмите кнопку \"Найти собеседника\" для того, чтобы начать общение!", reply_markup=keyboard)
+        bot.send_message(message.chat.id, "Привет, "+name+"!\n\nС помощью этого бота ты сможешь связаться с любым человеком абсолютно анонимно!\n\nНажмите кнопку \"Найти собеседника\" для того, чтобы начать общение!", reply_markup=keyboard)
 
     def handle_change(message):
         old = get_companion(str(message.chat.id))
@@ -159,37 +201,17 @@ def main():
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callback_query(call):
         if call.data == "find_companion":
-            if call.message.chat.id in paused_users:
-                bot.send_message(call.message.chat.id, "Вы приостановили бота. Сначала возобновите работу, используя команду /resume.")
-                return
             companion = find_companion_from_database(str(call.message.chat.id))
             if companion == "Empty":
                 bot.send_message(call.message.chat.id, "К сожалению, свободных собеседников нет")
-                print("Пользователь ID:" + str(call.message.chat.id) + " не нашел собеседника [свободных нет]")
+                print("Пользователь ID:"+str(call.message.chat.id)+" не нашел собеседника [свободных нет]")
             else:
                 set_companion(str(call.message.chat.id), companion)
                 set_companion(companion, str(call.message.chat.id))
                 bot.send_message(call.message.chat.id, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
                 bot.send_message(companion, "Собеседник найден!\n\nНапишите сообщение, и оно отправится ему! Если Вы решите сменить собеседника, введите команду /change")
-                print("Пользователь ID:" + str(call.message.chat.id) + " нашел собеседника ID:" + str(companion))
-
-    def remove_inactive_users():
-        while True:
-            time.sleep(60)  # Check every minute
-            current_time = time.time()
-            for user_id in list(active_users.keys()):
-                if current_time - active_users[user_id] > 600:  # 10 minutes
-                    # Remove user from active_users and set companion to '+'
-                    set_companion(str(user_id), '+')
-                    del active_users[user_id]
-                    print(f"[#] Пользователь ID:{user_id} был отключен из-за неактивности.")
-
-    # Start the background thread for removing inactive users
-    thread = Thread(target=remove_inactive_users)
-    thread.daemon = True
-    thread.start()
-
+                print("Пользователь ID:"+str(call.message.chat.id)+" нашел собеседника ID:"+str(companion))
     bot.infinity_polling()
 
 if __name__ == "__main__":
-    main()
+    main() 
