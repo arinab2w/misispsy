@@ -95,8 +95,18 @@ def forward_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        # Пересылаем сообщение без указания отправителя
-        context.bot.forward_message(chat_id=partner_id, from_chat_id=user_id, message_id=update.message.message_id)
+        # Пересылаем сообщение как текст без указания отправителя
+        context.bot.send_message(chat_id=partner_id, text=update.message.text)
+
+        # Если сообщение фото или другое мультимедиа
+        if update.message.photo:
+            context.bot.send_photo(chat_id=partner_id, photo=update.message.photo[-1].file_id)
+        elif update.message.video:
+            context.bot.send_video(chat_id=partner_id, video=update.message.video.file_id)
+        elif update.message.sticker:
+            context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
+        elif update.message.voice:
+            context.bot.send_voice(chat_id=partner_id, voice=update.message.voice.file_id)
 
 # Отправка фото после отключения
 def send_photo_to_user(context, user_id, photo_path):
