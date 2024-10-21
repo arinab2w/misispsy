@@ -3,14 +3,12 @@ import os
 import tempfile
 import time
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.utils import web
+from aiogram.utils import executor
 from flask import Flask, request
-from config import API_TOKEN  # Убедитесь, что токен хранится в config.py
+from const import API_TOKEN  # Импортируем токен из const.py
 
-# Инициализация бота и диспетчера
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
 # Подключение к базе данных SQLite (вместо работы с CSV)
 conn = sqlite3.connect('users.db', check_same_thread=False)  # check_same_thread=False для работы с многопоточностью
@@ -48,7 +46,7 @@ def clean_temp_directory(directory='temp/', max_age=86400):  # Удаление 
             os.remove(file_path)
 
 # Обработчик команды /start
-@dp.message_handler(Command('start'))
+@dp.message_handler(commands=['start'])
 async def start_handler(message: types.Message):
     user_id = message.from_user.id
     name = message.from_user.first_name
@@ -105,16 +103,16 @@ app = Flask(__name__)
 @app.route('/webhook', methods=['POST'])
 async def webhook():
     update = types.Update.de_json(request.stream.read().decode("utf-8"))
-    await bot.process_new_updates([update])  # Обработка обновлений
+    await bot.process_new_updates([update])  # Убедитесь, что эта строка ожидается
     return "OK", 200
 
 # Настройка webhook при запуске
 async def on_startup(dp):
-    await bot.set_webhook('https://yourdomain.com/webhook')
+    await bot.set_webhook('https://yourdomain.com/webhook')  # Замените на ваш домен
 
 # Очистка временной папки каждый раз при старте
 clean_temp_directory()
 
 if __name__ == '__main__':
     # Запуск Flask сервера и Telegram бота
-    web.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(dp, skip_updates=True)  # Используйте polling вместо webhook, если тестируете локально
