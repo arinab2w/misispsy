@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, InputMediaPhoto
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from const import TOKEN
 import time
@@ -6,6 +6,9 @@ import time
 # Здесь храним информацию о текущих чатах
 active_chats = {}
 waiting_users = []
+
+# Путь к фото, которую нужно отправить при завершении чата
+PHOTO_PATH = 'телега.jpg'
 
 # Функция для начала поиска собеседника
 def start(update: Update, context: CallbackContext):
@@ -59,10 +62,21 @@ def next(update: Update, context: CallbackContext):
 
     # Уведомляем пользователей об окончании чата
     context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат. Используйте /start, чтобы найти нового собеседника.")
+
+    # Отправляем картинку пользователю, завершившему чат
+    context.bot.send_photo(chat_id=user_id, photo=open(PHOTO_PATH, 'rb'))
     update.message.reply_text("Чат завершен. Ищем нового собеседника...")
+
+    # Удаляем картинку через 10 секунд
+    context.job_queue.run_once(delete_photo, 10, context={'chat_id': user_id})
 
     # Начинаем новый поиск для пользователя
     start(update, context)
+
+# Функция для удаления фото через 10 секунд
+def delete_photo(context: CallbackContext):
+    chat_id = context.job.context['chat_id']
+    context.bot.delete_message(chat_id=chat_id, message_id=context.job.context['message_id'])
 
 # Функция для завершения чата вручную
 def stop(update: Update, context: CallbackContext):
@@ -76,6 +90,10 @@ def stop(update: Update, context: CallbackContext):
 
     context.bot.send_message(chat_id=partner_id, text="Ваш собеседник завершил чат.")
     update.message.reply_text("Чат завершен.")
+
+    # Отправляем фото, если диалог был завершен
+    context.bot.send_photo(chat_id=user_id, photo=open(PHOTO_PATH, 'rb'))
+    context.job_queue.run_once(delete_photo, 10, context={'chat_id': user_id})
 
 # Основная функция для запуска бота
 def main():
