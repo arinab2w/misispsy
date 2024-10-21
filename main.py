@@ -3,7 +3,6 @@ import os
 import csv
 import random
 import const
-import main
 
 bot = telebot.TeleBot(const.TOKEN)
 bot.set_webhook()
