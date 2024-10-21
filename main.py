@@ -44,6 +44,7 @@ def connect_users(user_id, partner_id, context):
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
 
+        # Не упоминаем имен пользователей
         context.bot.send_message(chat_id=user_id, text="Найден собеседник!")
         context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
 
@@ -94,6 +95,7 @@ def forward_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     if user_id in active_chats:
         partner_id = active_chats[user_id]
+        # Пересылаем сообщение без указания отправителя
         context.bot.forward_message(chat_id=partner_id, from_chat_id=user_id, message_id=update.message.message_id)
 
 # Отправка фото после отключения
