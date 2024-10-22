@@ -1,140 +1,136 @@
-import asyncio
 import logging
+from telegram import Update
+from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, CallbackContext)
+from const import TOKEN
 import random
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from const import TOKEN  # Импорт токена из const.py
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# Логирование
-logging.basicConfig(level=logging.INFO)
+# Включаем логирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
-
-# Списки для пользователей
-users_waiting = []
+# Списки для ожидания и активных чатов
+waiting_users = []
 active_chats = {}
-user_ids = {}
 
-# Максимальное время ожидания
-SEARCH_TIMEOUT = 300  # 5 минут
-IDLE_TIMEOUT = 300    # 5 минут бездействия
+# Устанавливаем лимит на ожидание собеседника и беседу без активности (10 минут = 600 секунд)
+TIME_LIMIT = 600
 
-# Генерация уникальных номеров пользователей
-user_counter = 0
-
-async def connect_users():
-    while True:
-        if len(users_waiting) >= 2:
-            user1 = users_waiting.pop(0)
-            user2 = users_waiting.pop(0)
-            
-            active_chats[user1] = user2
-            active_chats[user2] = user1
-            
-            await bot.send_message(user1, "Вы подключены к собеседнику!")
-            await bot.send_message(user2, "Вы подключены к собеседнику!")
-        await asyncio.sleep(1)
-
-# Команда /start для начала работы
-@dp.message_handler(commands=['start'])
-async def start_command(message: types.Message):
-    global user_counter
-    user_id = message.from_user.id
-
-    # Присваивание уникального номера пользователю
-    if user_id not in user_ids:
-        user_counter += 1
-        user_ids[user_id] = f'user{user_counter}'
-
-    if user_id in active_chats:
-        await message.reply("Вы уже в чате с собеседником. Напишите /next для поиска нового.")
-    elif user_id not in users_waiting:
-        users_waiting.append(user_id)
-        await message.reply("Ищем вам собеседника...")
-        await search_for_partner(user_id)
-
-# Команда /next для смены собеседника
-@dp.message_handler(commands=['next'])
-async def next_command(message: types.Message):
-    user_id = message.from_user.id
-
-    if user_id in active_chats:
-        partner_id = active_chats[user_id]
-        await bot.send_message(partner_id, "Собеседник отключился.")
-        await disconnect(user_id)
-
-    await start_command(message)
-
-# Команда /stop для отключения
-@dp.message_handler(commands=['stop'])
-async def stop_command(message: types.Message):
-    user_id = message.from_user.id
-
-    if user_id in active_chats:
-        partner_id = active_chats[user_id]
-        await bot.send_message(partner_id, "Собеседник отключился.")
-        await disconnect(user_id)
-    else:
-        if user_id in users_waiting:
-            users_waiting.remove(user_id)
-        await message.reply("Вы отключились от поиска.")
-
-# Поиск собеседника
-async def search_for_partner(user_id):
-    for _ in range(SEARCH_TIMEOUT):
-        if user_id in active_chats:
-            return
-        if user_id not in users_waiting:
-            return
-        await asyncio.sleep(1)
+# Функция для старта поиска собеседника
+def start(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
     
-    if user_id in users_waiting:
-        users_waiting.remove(user_id)
-        await bot.send_message(user_id, "Собеседник пока не найден, попробуйте позже.")
-
-# Функция отключения
-async def disconnect(user_id):
     if user_id in active_chats:
-        partner_id = active_chats.pop(user_id)
-        if partner_id in active_chats:
-            active_chats.pop(partner_id)
+        context.bot.send_message(chat_id=user_id, text="Вы уже общаетесь с собеседником.")
+    else:
+        context.bot.send_message(chat_id=user_id, text="Ищем собеседника...")
+        start_search_for_partner(user_id, context)
 
-    if user_id in users_waiting:
-        users_waiting.remove(user_id)
+# Функция поиска собеседника
+def start_search_for_partner(user_id, context):
+    if waiting_users and waiting_users[0] != user_id:
+        partner_id = waiting_users.pop(0)
+        connect_users(user_id, partner_id, context)
+    else:
+        waiting_users.append(user_id)
 
-    await bot.send_message(user_id, "Вы отключены.")
+# Соединение двух пользователей
+def connect_users(user_id, partner_id, context):
+    if user_id not in active_chats and partner_id not in active_chats:
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
 
-# Таймауты при бездействии
-async def idle_timeout_check():
-    while True:
-        for user_id, partner_id in list(active_chats.items()):
-            try:
-                await bot.send_chat_action(user_id, "typing")
-            except:
-                await disconnect(user_id)
-                await bot.send_message(partner_id, "Собеседник отключился.")
-        await asyncio.sleep(IDLE_TIMEOUT)
+        context.bot.send_message(chat_id=user_id, text="Найден собеседник!")
+        context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
 
-# Обработка текстовых сообщений
-@dp.message_handler(content_types=types.ContentType.ANY)
-async def handle_message(message: types.Message):
-    user_id = message.from_user.id
+        # Сбрасываем таймеры через 10 минут
+        context.job_queue.run_once(disconnect_due_to_timeout, TIME_LIMIT, context={'user_id': user_id, 'partner_id': partner_id})
+    else:
+        context.bot.send_message(chat_id=user_id, text="Ошибка соединения. Повторите попытку.")
+
+# Отключение собеседников по таймеру
+def disconnect_due_to_timeout(context: CallbackContext) -> None:
+    user_id = context.job.context['user_id']
+    partner_id = context.job.context['partner_id']
+
+    if user_id in active_chats and active_chats[user_id] == partner_id:
+        disconnect_users(user_id, partner_id, context)
+
+# Отключение двух пользователей
+def disconnect_users(user_id, partner_id, context):
+    del active_chats[user_id]
+    del active_chats[partner_id]
+
+    context.bot.send_message(chat_id=user_id, text="Собеседник отключен. Ищем нового собеседника...")
+    context.bot.send_message(chat_id=partner_id, text="Собеседник отключен. Ищем нового собеседника...")
+
+    # Ищем нового собеседника сразу после отключения
+    start_search_for_partner(user_id, context)
+    start_search_for_partner(partner_id, context)
+
+# Команда /stop для прекращения чата
+def stop(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        try:
-            # Пересылаем все виды контента от одного пользователя к другому
-            if message.content_type == 'text':
-                await bot.send_message(partner_id, message.text)
-            else:
-                await message.copy_to(partner_id)
-        except:
-            await disconnect(user_id)
-            await bot.send_message(user_id, "Ошибка отправки сообщения. Собеседник отключен.")
+        disconnect_users(user_id, partner_id, context)
+    else:
+        context.bot.send_message(chat_id=user_id, text="Вы не находитесь в чате.")
+
+# Команда /next для поиска нового собеседника
+def next(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        disconnect_users(user_id, partner_id, context)
+    context.bot.send_message(chat_id=user_id, text="Ищем нового собеседника...")
+    start_search_for_partner(user_id, context)
+
+# Обработка текстовых сообщений и отправка их собеседнику
+def forward_message(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        context.bot.send_message(chat_id=partner_id, text=update.message.text)
+
+# Обработка мультимедиа и отправка его собеседнику
+def forward_media(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        
+        # Пересылаем фото или другое мультимедиа без указания отправителя
+        if update.message.photo:
+            context.bot.send_photo(chat_id=partner_id, photo=update.message.photo[-1].file_id)
+        elif update.message.video:
+            context.bot.send_video(chat_id=partner_id, video=update.message.video.file_id)
+        elif update.message.sticker:
+            context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
+        elif update.message.voice:
+            context.bot.send_voice(chat_id=partner_id, voice=update.message.voice.file_id)
+
+# Основная функция для запуска бота
+def main() -> None:
+    updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+
+    # Команды
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("stop", stop))
+    dispatcher.add_handler(CommandHandler("next", next))
+
+    # Обработка текстовых сообщений
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_message))
+
+    # Обработка мультимедиа
+    dispatcher.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.sticker | Filters.voice, forward_media))
+
+    # Запускаем бота
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.create_task(connect_users())
-    loop.create_task(idle_timeout_check())
-    executor.start_polling(dp, skip_updates=True)
+    main()
