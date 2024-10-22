@@ -112,6 +112,18 @@ def forward_media(update: Update, context: CallbackContext) -> None:
         elif update.message.voice:
             context.bot.send_voice(chat_id=partner_id, voice=update.message.voice.file_id)
 
+# Функция для обработки редактирования сообщений
+def handle_edited_message(update: Update, context: CallbackContext) -> None:
+    user_id = update.edited_message.chat_id
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        context.bot.send_message(chat_id=partner_id, text=f"Сообщение от собеседника было изменено: {update.edited_message.text}")
+
+# Функция для отображения количества активных пользователей
+def active_users(update: Update, context: CallbackContext) -> None:
+    active_users_count = len(active_chats) // 2
+    context.bot.send_message(chat_id=update.message.chat_id, text=f"Сейчас общаются {active_users_count} пар(ы) пользователей.")
+
 # Основная функция для запуска бота
 def main() -> None:
     updater = Updater(TOKEN, use_context=True)
@@ -121,6 +133,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("stop", stop))
     dispatcher.add_handler(CommandHandler("next", next))
+    dispatcher.add_handler(CommandHandler("active", active_users))  # Команда для отображения активных пользователей
 
     # Обработка текстовых сообщений
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_message))
@@ -128,10 +141,12 @@ def main() -> None:
     # Обработка мультимедиа
     dispatcher.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.sticker | Filters.voice, forward_media))
 
+    # Обработка редактирования сообщений
+    dispatcher.add_handler(MessageHandler(Filters.edited_message, handle_edited_message))
+
     # Запускаем бота
     updater.start_polling()
     updater.idle()
 
 if __name__ == '__main__':
     main()
-
