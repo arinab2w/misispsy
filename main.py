@@ -23,7 +23,7 @@ TIME_LIMIT = 600
 # Функция для старта поиска собеседника
 def start(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
-
+    
     if user_id in active_chats:
         context.bot.send_message(chat_id=user_id, text="Вы уже общаетесь с собеседником.")
     else:
@@ -32,10 +32,6 @@ def start(update: Update, context: CallbackContext) -> None:
 
 # Функция поиска собеседника
 def start_search_for_partner(user_id, context):
-    if user_id in waiting_users:
-        context.bot.send_message(chat_id=user_id, text="Вы уже ожидаете собеседника.")
-        return
-
     if waiting_users and waiting_users[0] != user_id:
         partner_id = waiting_users.pop(0)
         connect_users(user_id, partner_id, context)
@@ -58,9 +54,8 @@ def connect_users(user_id, partner_id, context):
 
 # Отключение собеседников по таймеру
 def disconnect_due_to_timeout(context: CallbackContext) -> None:
-    job_data = context.job.context
-    user_id = job_data['user_id']
-    partner_id = job_data['partner_id']
+    user_id = context.job.context['user_id']
+    partner_id = context.job.context['partner_id']
 
     if user_id in active_chats and active_chats[user_id] == partner_id:
         disconnect_users(user_id, partner_id, context)
@@ -99,6 +94,7 @@ def forward_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     if user_id in active_chats:
         partner_id = active_chats[user_id]
+        # Пересылаем текстовое сообщение без указания отправителя
         context.bot.send_message(chat_id=partner_id, text=update.message.text)
 
 # Обработка мультимедиа и отправка его собеседнику
@@ -106,7 +102,8 @@ def forward_media(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-
+        
+        # Пересылаем фото или другое мультимедиа без указания отправителя
         if update.message.photo:
             context.bot.send_photo(chat_id=partner_id, photo=update.message.photo[-1].file_id)
         elif update.message.video:
@@ -132,14 +129,18 @@ def main() -> None:
     # Обработка мультимедиа
     dispatcher.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.sticker | Filters.voice, forward_media))
 
-    # Используем Webhook вместо long-polling
-    PORT = int(os.environ.get('PORT', 5000))
-    updater.start_webhook(listen="0.0.0.0",
-                          port=PORT,
-                          url_path=TOKEN)
-
-    # Задайте URL Webhook вашего приложения (замените на правильный URL для Render)
-    updater.bot.set_webhook(f"https://{os.environ.get('RENDER_EXTERNAL_URL')}/{TOKEN}")
+    # Получаем внешний URL от Render
+    RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL')
+    
+    if RENDER_EXTERNAL_URL:
+        PORT = 443  # Используем допустимый порт
+        # Устанавливаем Webhook
+        updater.start_webhook(listen="0.0.0.0",
+                              port=PORT,
+                              url_path=TOKEN)
+        updater.bot.set_webhook(f"https://{RENDER_EXTERNAL_URL}/{TOKEN}")
+    else:
+        logger.error("RENDER_EXTERNAL_URL не найден. Проверьте переменные окружения.")
 
     updater.idle()
 
