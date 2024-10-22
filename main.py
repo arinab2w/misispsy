@@ -112,17 +112,17 @@ def forward_media(update: Update, context: CallbackContext) -> None:
         elif update.message.voice:
             context.bot.send_voice(chat_id=partner_id, voice=update.message.voice.file_id)
 
-# Функция для обработки редактирования сообщений
+# Обработка редактированных сообщений
 def handle_edited_message(update: Update, context: CallbackContext) -> None:
     user_id = update.edited_message.chat_id
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        context.bot.send_message(chat_id=partner_id, text=f"Сообщение от собеседника было изменено: {update.edited_message.text}")
+        context.bot.send_message(chat_id=partner_id, text=f"(редактировано) {update.edited_message.text}")
 
-# Функция для отображения количества активных пользователей
-def active_users(update: Update, context: CallbackContext) -> None:
-    active_users_count = len(active_chats) // 2
-    context.bot.send_message(chat_id=update.message.chat_id, text=f"Сейчас общаются {active_users_count} пар(ы) пользователей.")
+# Команда для отображения количества активных пользователей в боте
+def active_users_count(update: Update, context: CallbackContext) -> None:
+    active_count = len(set(active_chats.keys()))
+    context.bot.send_message(chat_id=update.message.chat_id, text=f"Сейчас общается {active_count} пользователей.")
 
 # Основная функция для запуска бота
 def main() -> None:
@@ -133,16 +133,16 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("stop", stop))
     dispatcher.add_handler(CommandHandler("next", next))
-    dispatcher.add_handler(CommandHandler("active", active_users))  # Команда для отображения активных пользователей
+    dispatcher.add_handler(CommandHandler("active_users", active_users_count))  # Новая команда для показа активных пользователей
 
     # Обработка текстовых сообщений
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_message))
 
+    # Обработка редактированных сообщений
+    dispatcher.add_handler(MessageHandler(Filters.update.edited_message, handle_edited_message))
+
     # Обработка мультимедиа
     dispatcher.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.sticker | Filters.voice, forward_media))
-
-    # Обработка редактирования сообщений
-    dispatcher.add_handler(MessageHandler(Filters.edited_message, handle_edited_message))
 
     # Запускаем бота
     updater.start_polling()
