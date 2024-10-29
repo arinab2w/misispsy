@@ -1,0 +1,15 @@
+services:
+  misis-psy:
+    container_name: misis-psy
+    build: ./
+    restart: always
+    env_file:
+      - path: ./.env
+        required: false
+      - path: ./.env.development.local
+        required: false
+    environment:
+      - PORT=8000
+    volumes:
+      - ./data:/usr/src/app/data:rw
+      #- ./media:/usr/src/app/media:rw

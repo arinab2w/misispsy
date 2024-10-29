@@ -1,9 +1,10 @@
 import logging
 from telegram import Update
 from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, CallbackContext)
-from const import TOKEN
 import random
-from apscheduler.schedulers.background import BackgroundScheduler
+# from apscheduler.schedulers.background import BackgroundScheduler
+from dotenv import load_dotenv
+import os
 
 # Включаем логирование
 logging.basicConfig(
@@ -126,7 +127,9 @@ def active_users_count(update: Update, context: CallbackContext) -> None:
 
 # Основная функция для запуска бота
 def main() -> None:
-    updater = Updater(TOKEN, use_context=True)
+    load_dotenv()
+
+    updater = Updater(os.getenv('TOKEN'), use_context=True)
     dispatcher = updater.dispatcher
 
     # Команды
