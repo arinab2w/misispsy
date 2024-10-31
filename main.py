@@ -18,6 +18,7 @@ waiting_users = []
 active_chats = {}
 banned_users = set()  # Бан-лист
 silent_timers = {}  # Таймеры для отслеживания молчания
+stopped_users = set()  # Пользователи, отключившиеся через /stop
 
 # Устанавливаем лимит на молчание (10 минут = 600 секунд)
 SILENCE_LIMIT = 600
@@ -26,6 +27,10 @@ PROHIBITED_WORDS = ["мат1", "мат2", "мат3"]  # Замена на реа
 # Функция для старта с приветствием
 def start(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
+    
+    # Если пользователь ранее отправил /stop, удаляем его из списка stopped_users
+    if user_id in stopped_users:
+        stopped_users.remove(user_id)
     
     # Приветственное сообщение
     welcome_message = ("Здравствуй, дорогой пользователь! Данный чат-бот предназначен для анонимной переписки между студентами "
@@ -75,6 +80,7 @@ def disconnect_due_to_silence(context: CallbackContext) -> None:
 
 # Отключение двух пользователей
 def disconnect_users(user_id, partner_id, context):
+    # Убираем из таймеров молчания
     if user_id in silent_timers:
         silent_timers[user_id].schedule_removal()
         del silent_timers[user_id]
@@ -82,33 +88,35 @@ def disconnect_users(user_id, partner_id, context):
         silent_timers[partner_id].schedule_removal()
         del silent_timers[partner_id]
     
+    # Убираем пользователей из активных чатов
     del active_chats[user_id]
     del active_chats[partner_id]
 
-    context.bot.send_message(chat_id=user_id, text="Собеседник отключен. Ищем нового собеседника...")
-    context.bot.send_message(chat_id=partner_id, text="Собеседник отключен. Ищем нового собеседника...")
-
-    # Ищем нового собеседника сразу после отключения
-    start_search_for_partner(user_id, context)
-    start_search_for_partner(partner_id, context)
-
-# Команда /stop для прекращения чата
+# Команда /stop для полной остановки бота
 def stop(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
+    stopped_users.add(user_id)
+    
+    # Если пользователь находится в чате, отключаем его
     if user_id in active_chats:
         partner_id = active_chats[user_id]
         disconnect_users(user_id, partner_id, context)
-    else:
-        context.bot.send_message(chat_id=user_id, text="Вы не находитесь в чате.")
+        context.bot.send_message(chat_id=partner_id, text="Ваш собеседник покинул чат.")
+
+    context.bot.send_message(chat_id=user_id, text="Вы успешно остановили бота. Чтобы возобновить общение, введите команду /start.")
 
 # Команда /next для поиска нового собеседника
 def next(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
+    if user_id in stopped_users:
+        context.bot.send_message(chat_id=user_id, text="Вы остановили бота. Введите команду /start, чтобы возобновить общение.")
+        return
+    
     if user_id in active_chats:
         partner_id = active_chats[user_id]
         disconnect_users(user_id, partner_id, context)
-    context.bot.send_message(chat_id=user_id, text="Ищем нового собеседника...")
-    start_search_for_partner(user_id, context)
+        context.bot.send_message(chat_id=user_id, text="Ищем нового собеседника...")
+        start_search_for_partner(user_id, context)
 
 # Проверка на запрещенные слова
 def check_prohibited_words(text):
@@ -117,6 +125,11 @@ def check_prohibited_words(text):
 # Обработка текстовых сообщений с проверкой на нецензурные слова и сброс таймера молчания
 def forward_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
+    
+    # Если пользователь отключен, не обрабатываем сообщения
+    if user_id in stopped_users:
+        return
+    
     if user_id in active_chats:
         partner_id = active_chats[user_id]
         message_text = update.message.text
