@@ -27,7 +27,7 @@ PROHIBITED_WORDS = ["мат1", "мат2", "мат3"]  # Замена на реа
 # Функция для старта с приветствием
 def start(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
-    
+
     # Если пользователь ранее отправил /stop, удаляем его из списка stopped_users
     if user_id in stopped_users:
         stopped_users.remove(user_id)
@@ -89,10 +89,12 @@ def disconnect_users(user_id, partner_id, context):
         del silent_timers[partner_id]
     
     # Убираем пользователей из активных чатов
-    del active_chats[user_id]
-    del active_chats[partner_id]
+    if user_id in active_chats:
+        del active_chats[user_id]
+    if partner_id in active_chats:
+        del active_chats[partner_id]
 
-# Команда /stop для полной остановки бота
+# Команда /stop для остановки бота
 def stop(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     stopped_users.add(user_id)
@@ -117,12 +119,14 @@ def next(update: Update, context: CallbackContext) -> None:
         disconnect_users(user_id, partner_id, context)
         context.bot.send_message(chat_id=user_id, text="Ищем нового собеседника...")
         start_search_for_partner(user_id, context)
+    else:
+        start_search_for_partner(user_id, context)
 
 # Проверка на запрещенные слова
 def check_prohibited_words(text):
     return any(re.search(rf'\b{word}\b', text, re.IGNORECASE) for word in PROHIBITED_WORDS)
 
-# Обработка текстовых сообщений с проверкой на нецензурные слова и сброс таймера молчания
+# Обработка текстовых сообщений и изображений с проверкой на нецензурные слова
 def forward_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     
@@ -132,17 +136,24 @@ def forward_message(update: Update, context: CallbackContext) -> None:
     
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        message_text = update.message.text
         
-        # Проверка на нецензурную лексику
-        if check_prohibited_words(message_text):
+        # Проверка текста сообщения на нецензурные слова
+        message_text = update.message.text
+        if message_text and check_prohibited_words(message_text):
             banned_users.add(user_id)
             context.bot.send_message(chat_id=user_id, text="Вы забанены за использование нецензурных слов.")
             context.bot.send_message(chat_id=partner_id, text="Ваш собеседник был отключен за нарушение правил.")
             disconnect_users(user_id, partner_id, context)
         else:
-            # Пересылаем сообщение и сбрасываем таймер молчания
-            context.bot.send_message(chat_id=partner_id, text=message_text)
+            # Пересылка текста
+            if message_text:
+                context.bot.send_message(chat_id=partner_id, text=message_text)
+            
+            # Пересылка фото
+            if update.message.photo:
+                photo_file = update.message.photo[-1].file_id
+                context.bot.send_photo(chat_id=partner_id, photo=photo_file)
+
             reset_silence_timer(user_id, partner_id, context)
 
 # Сброс таймера молчания при активности пользователя
@@ -167,8 +178,9 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("stop", stop))
     dispatcher.add_handler(CommandHandler("next", next))
 
-    # Обработка текстовых сообщений
+    # Обработка текстовых сообщений и фото
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_message))
+    dispatcher.add_handler(MessageHandler(Filters.photo, forward_message))
 
     # Запускаем бота
     updater.start_polling()
