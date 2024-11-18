@@ -17,12 +17,11 @@ logger = logging.getLogger(__name__)
 waiting_users = []
 active_chats = {}
 banned_users = set()  # Бан-лист
-silent_timers = {}  # Таймеры для отслеживания молчания
 stopped_users = set()  # Пользователи, отключившиеся через /stop
 
 # Устанавливаем лимит на молчание (10 минут = 600 секунд)
-SILENCE_LIMIT = 600
-PROHIBITED_WORDS = ["мат1", "мат2", "мат3"]  # Замена на реальные запрещенные слова
+
+PROHIBITED_WORDS = ["бля", "нахуй", "пизда"]  # Замена на реальные запрещенные слова
 
 # Функция для старта с приветствием
 def start(update: Update, context: CallbackContext) -> None:
@@ -64,19 +63,7 @@ def connect_users(user_id, partner_id, context):
         context.bot.send_message(chat_id=user_id, text="Найден собеседник!")
         context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
 
-        # Запускаем таймер молчания для обоих пользователей
-        silent_timers[user_id] = context.job_queue.run_once(disconnect_due_to_silence, SILENCE_LIMIT, context={'user_id': user_id, 'partner_id': partner_id})
-        silent_timers[partner_id] = context.job_queue.run_once(disconnect_due_to_silence, SILENCE_LIMIT, context={'user_id': partner_id, 'partner_id': user_id})
-
-# Отключение собеседников по таймеру молчания
-def disconnect_due_to_silence(context: CallbackContext) -> None:
-    user_id = context.job.context['user_id']
-    partner_id = context.job.context['partner_id']
-
-    if user_id in active_chats and active_chats[user_id] == partner_id:
-        context.bot.send_message(chat_id=user_id, text="Вы отключены за молчание.")
-        context.bot.send_message(chat_id=partner_id, text="Ваш собеседник был отключен за молчание.")
-        disconnect_users(user_id, partner_id, context)
+    
 
 # Отключение двух пользователей
 def disconnect_users(user_id, partner_id, context):
@@ -156,15 +143,6 @@ def forward_message(update: Update, context: CallbackContext) -> None:
 
             reset_silence_timer(user_id, partner_id, context)
 
-# Сброс таймера молчания при активности пользователя
-def reset_silence_timer(user_id, partner_id, context):
-    if user_id in silent_timers:
-        silent_timers[user_id].schedule_removal()
-    if partner_id in silent_timers:
-        silent_timers[partner_id].schedule_removal()
-
-    silent_timers[user_id] = context.job_queue.run_once(disconnect_due_to_silence, SILENCE_LIMIT, context={'user_id': user_id, 'partner_id': partner_id})
-    silent_timers[partner_id] = context.job_queue.run_once(disconnect_due_to_silence, SILENCE_LIMIT, context={'user_id': partner_id, 'partner_id': user_id})
 
 # Основная функция для запуска бота
 def main() -> None:
