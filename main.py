@@ -1,5 +1,6 @@
-from telegram import Update, Bot
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram import Update, Bot
+from const import TOKEN  # Импортируем токен из const.py
 
 # Списки для отслеживания состояния пользователей
 active_chats = {}  # {user_id: partner_id}
@@ -104,8 +105,7 @@ def unknown_command(update: Update, context: CallbackContext) -> None:
 
 # Основная функция запуска бота
 def main():
-    # Замените <YOUR_TOKEN> на токен вашего бота
-    updater = Updater("<YOUR_TOKEN>", use_context=True)
+    updater = Updater(TOKEN, use_context=True)  # Используем токен из const.py
 
     dp = updater.dispatcher
 
