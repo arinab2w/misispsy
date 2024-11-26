@@ -1,6 +1,6 @@
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from telegram import Update
-from const import TOKEN  # Импортируем токен из файла const.py
+from const import TOKEN  # Импортируем токен из const.py
 
 # Списки для отслеживания состояния пользователей
 active_chats = {}  # {user_id: partner_id}
@@ -55,7 +55,11 @@ def next(update: Update, context: CallbackContext) -> None:
 
         # Уведомляем партнера
         if partner_id in active_chats:
-            context.bot.send_message(chat_id=partner_id, text="Ваш собеседник покинул чат.")
+            context.bot.send_message(chat_id=partner_id, text="Ваш собеседник покинул чат. Поиск нового собеседника...")
+
+            # Отключаем собеседника
+            disconnect_users(partner_id, user_id, context)
+            start_search_for_partner(partner_id, context)  # Начинаем поиск нового собеседника для партнера
 
         disconnect_users(user_id, partner_id, context)
 
@@ -99,35 +103,13 @@ def handle_message(update: Update, context: CallbackContext) -> None:
     else:
         context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start, чтобы начать поиск.")
 
-# Обработка стикеров
-def handle_sticker(update: Update, context: CallbackContext) -> None:
-    user_id = update.message.chat_id
-
-    if user_id in active_chats:
-        partner_id = active_chats[user_id]
-        context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
-    else:
-        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start.")
-
-# Обработка фотографий
-def handle_photo(update: Update, context: CallbackContext) -> None:
-    user_id = update.message.chat_id
-
-    if user_id in active_chats:
-        partner_id = active_chats[user_id]
-        photo = update.message.photo[-1].file_id  # Берем фото с максимальным разрешением
-        caption = update.message.caption if update.message.caption else ""
-        context.bot.send_photo(chat_id=partner_id, photo=photo, caption=caption)
-    else:
-        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start.")
-
 # Обработка неизвестных команд
 def unknown_command(update: Update, context: CallbackContext) -> None:
     context.bot.send_message(chat_id=update.message.chat_id, text="Неизвестная команда. Попробуйте /start, /stop или /next.")
 
 # Основная функция запуска бота
 def main():
-    updater = Updater(TOKEN, use_context=True)  # Используем токен из const.py
+    updater = Updater(TOKEN, use_context=True)
 
     dp = updater.dispatcher
 
@@ -135,8 +117,6 @@ def main():
     dp.add_handler(CommandHandler("stop", stop))
     dp.add_handler(CommandHandler("next", next))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    dp.add_handler(MessageHandler(Filters.sticker, handle_sticker))
-    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
     dp.add_handler(MessageHandler(Filters.command, unknown_command))
 
     updater.start_polling()
