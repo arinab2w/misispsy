@@ -19,9 +19,7 @@ active_chats = {}
 banned_users = set()  # Бан-лист
 stopped_users = set()  # Пользователи, отключившиеся через /stop
 
-# Устанавливаем лимит на молчание (10 минут = 600 секунд)
-
-PROHIBITED_WORDS = ["бля", "нахуй", "пизда"]  # Замена на реальные запрещенные слова
+PROHIBITED_WORDS = ["бля", "блядь", "пиздец"]  # Замена на реальные запрещенные слова
 
 # Функция для старта с приветствием
 def start(update: Update, context: CallbackContext) -> None:
@@ -54,7 +52,7 @@ def start_search_for_partner(user_id, context):
     else:
         waiting_users.append(user_id)
 
-# Соединение двух пользователей и установка таймеров молчания
+# Соединение двух пользователей
 def connect_users(user_id, partner_id, context):
     if user_id not in active_chats and partner_id not in active_chats:
         active_chats[user_id] = partner_id
@@ -63,18 +61,8 @@ def connect_users(user_id, partner_id, context):
         context.bot.send_message(chat_id=user_id, text="Найден собеседник!")
         context.bot.send_message(chat_id=partner_id, text="Найден собеседник!")
 
-    
-
 # Отключение двух пользователей
 def disconnect_users(user_id, partner_id, context):
-    # Убираем из таймеров молчания
-    if user_id in silent_timers:
-        silent_timers[user_id].schedule_removal()
-        del silent_timers[user_id]
-    if partner_id in silent_timers:
-        silent_timers[partner_id].schedule_removal()
-        del silent_timers[partner_id]
-    
     # Убираем пользователей из активных чатов
     if user_id in active_chats:
         del active_chats[user_id]
@@ -140,9 +128,6 @@ def forward_message(update: Update, context: CallbackContext) -> None:
             if update.message.photo:
                 photo_file = update.message.photo[-1].file_id
                 context.bot.send_photo(chat_id=partner_id, photo=photo_file)
-
-            reset_silence_timer(user_id, partner_id, context)
-
 
 # Основная функция для запуска бота
 def main() -> None:
