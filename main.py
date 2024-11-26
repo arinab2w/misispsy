@@ -19,7 +19,7 @@ active_chats = {}
 banned_users = set()  # Бан-лист
 stopped_users = set()  # Пользователи, отключившиеся через /stop
 
-PROHIBITED_WORDS = ["бля", "блядь", "пиздец"]  # Замена на реальные запрещенные слова
+PROHIBITED_WORDS = ["мат1", "мат2", "мат3", "бля", "блядь", "сука", "пиздец"]  # Список запрещенных слов
 
 # Функция для старта с приветствием
 def start(update: Update, context: CallbackContext) -> None:
@@ -101,7 +101,7 @@ def next(update: Update, context: CallbackContext) -> None:
 def check_prohibited_words(text):
     return any(re.search(rf'\b{word}\b', text, re.IGNORECASE) for word in PROHIBITED_WORDS)
 
-# Обработка текстовых сообщений и изображений с проверкой на нецензурные слова
+# Обработка текстовых сообщений, изображений и стикеров с проверкой на нецензурные слова
 def forward_message(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     
@@ -128,6 +128,11 @@ def forward_message(update: Update, context: CallbackContext) -> None:
             if update.message.photo:
                 photo_file = update.message.photo[-1].file_id
                 context.bot.send_photo(chat_id=partner_id, photo=photo_file)
+            
+            # Пересылка стикеров
+            if update.message.sticker:
+                sticker_file = update.message.sticker.file_id
+                context.bot.send_sticker(chat_id=partner_id, sticker=sticker_file)
 
 # Основная функция для запуска бота
 def main() -> None:
@@ -141,13 +146,14 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("stop", stop))
     dispatcher.add_handler(CommandHandler("next", next))
 
-    # Обработка текстовых сообщений и фото
+    # Обработка текстовых сообщений, фото и стикеров
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_message))
     dispatcher.add_handler(MessageHandler(Filters.photo, forward_message))
+    dispatcher.add_handler(MessageHandler(Filters.sticker, forward_message))  # Новый фильтр для стикеров
 
     # Запускаем бота
     updater.start_polling()
     updater.idle()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
