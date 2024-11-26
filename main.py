@@ -1,6 +1,6 @@
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from telegram import Update
-from const import TOKEN  # Импортируем токен из const.py
+from const import TOKEN  # Импортируем токен из файла const.py
 
 # Списки для отслеживания состояния пользователей
 active_chats = {}  # {user_id: partner_id}
@@ -95,11 +95,7 @@ def handle_message(update: Update, context: CallbackContext) -> None:
 
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        if partner_id in active_chats:  # Убедиться, что партнер активен
-            context.bot.send_message(chat_id=partner_id, text=update.message.text)
-        else:
-            context.bot.send_message(chat_id=user_id, text="Ваш собеседник отключился. Введите /start, чтобы найти нового.")
-            disconnect_users(user_id, partner_id, context)
+        context.bot.send_message(chat_id=partner_id, text=update.message.text)
     else:
         context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start, чтобы начать поиск.")
 
@@ -109,13 +105,9 @@ def handle_sticker(update: Update, context: CallbackContext) -> None:
 
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        if partner_id in active_chats:
-            context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
-        else:
-            context.bot.send_message(chat_id=user_id, text="Ваш собеседник отключился. Введите /start, чтобы найти нового.")
-            disconnect_users(user_id, partner_id, context)
+        context.bot.send_sticker(chat_id=partner_id, sticker=update.message.sticker.file_id)
     else:
-        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start, чтобы начать поиск.")
+        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start.")
 
 # Обработка фотографий
 def handle_photo(update: Update, context: CallbackContext) -> None:
@@ -123,14 +115,11 @@ def handle_photo(update: Update, context: CallbackContext) -> None:
 
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        if partner_id in active_chats:
-            photo = update.message.photo[-1].file_id  # Берем фото с максимальным разрешением
-            context.bot.send_photo(chat_id=partner_id, photo=photo, caption=update.message.caption)
-        else:
-            context.bot.send_message(chat_id=user_id, text="Ваш собеседник отключился. Введите /start, чтобы найти нового.")
-            disconnect_users(user_id, partner_id, context)
+        photo = update.message.photo[-1].file_id  # Берем фото с максимальным разрешением
+        caption = update.message.caption if update.message.caption else ""
+        context.bot.send_photo(chat_id=partner_id, photo=photo, caption=caption)
     else:
-        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start, чтобы начать поиск.")
+        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start.")
 
 # Обработка неизвестных команд
 def unknown_command(update: Update, context: CallbackContext) -> None:
@@ -138,7 +127,7 @@ def unknown_command(update: Update, context: CallbackContext) -> None:
 
 # Основная функция запуска бота
 def main():
-    updater = Updater(TOKEN)
+    updater = Updater(TOKEN, use_context=True)  # Используем токен из const.py
 
     dp = updater.dispatcher
 
@@ -146,8 +135,8 @@ def main():
     dp.add_handler(CommandHandler("stop", stop))
     dp.add_handler(CommandHandler("next", next))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    dp.add_handler(MessageHandler(Filters.sticker, handle_sticker))  # Обработка стикеров
-    dp.add_handler(MessageHandler(Filters.photo, handle_photo))      # Обработка фотографий
+    dp.add_handler(MessageHandler(Filters.sticker, handle_sticker))
+    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
     dp.add_handler(MessageHandler(Filters.command, unknown_command))
 
     updater.start_polling()
