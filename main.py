@@ -37,7 +37,7 @@ def start(update: Update, context: CallbackContext) -> None:
         logger.info(f"User {user_id} tried to start while already in a chat")
         return
 
-    context.bot.send_message(chat_id=user_id, text="Здравствуй, дорогой пользователь! Данный чат-бот предназначен для анонимной переписки между студентами университета МИСиС. Здесь ты можешь чувствовать себя комфортно, не бояться быть открытым и делиться своими переживаниями. Убедительная просьба быть вежливыми друг к другу!")
+    context.bot.send_message(chat_id=user_id, text="Здравствуй! Ищем для тебя собеседника...")
     start_search_for_partner(user_id, context)
 
 # Команда /stop
@@ -84,6 +84,10 @@ def next(update: Update, context: CallbackContext) -> None:
 
 # Поиск нового собеседника
 def start_search_for_partner(user_id, context):
+    if user_id in stopped_users:
+        logger.warning(f"User {user_id} tried to search while stopped")
+        return
+
     if user_id in banned_users:
         context.bot.send_message(chat_id=user_id, text="Вы заблокированы за нарушение правил.")
         logger.warning(f"Blocked user {user_id} attempted to search for a partner")
@@ -127,33 +131,6 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         logger.info(f"User {user_id} sent a message without a partner: {message_text}")
         context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start, чтобы начать поиск.")
 
-# Обработка стикеров
-def handle_sticker(update: Update, context: CallbackContext) -> None:
-    user_id = update.message.chat_id
-    sticker_id = update.message.sticker.file_id
-
-    if user_id in active_chats:
-        partner_id = active_chats[user_id]
-        logger.info(f"Sticker from user {user_id} to partner {partner_id}")
-        context.bot.send_sticker(chat_id=partner_id, sticker=sticker_id)
-    else:
-        logger.info(f"User {user_id} sent a sticker without a partner")
-        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start.")
-
-# Обработка фотографий
-def handle_photo(update: Update, context: CallbackContext) -> None:
-    user_id = update.message.chat_id
-    photo_id = update.message.photo[-1].file_id
-    caption = update.message.caption if update.message.caption else ""
-
-    if user_id in active_chats:
-        partner_id = active_chats[user_id]
-        logger.info(f"Photo from user {user_id} to partner {partner_id} with caption: {caption}")
-        context.bot.send_photo(chat_id=partner_id, photo=photo_id, caption=caption)
-    else:
-        logger.info(f"User {user_id} sent a photo without a partner")
-        context.bot.send_message(chat_id=user_id, text="Вы не подключены к собеседнику. Введите /start.")
-
 # Обработка неизвестных команд
 def unknown_command(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
@@ -170,8 +147,6 @@ def main():
     dp.add_handler(CommandHandler("stop", stop))
     dp.add_handler(CommandHandler("next", next))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    dp.add_handler(MessageHandler(Filters.sticker, handle_sticker))
-    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
     dp.add_handler(MessageHandler(Filters.command, unknown_command))
 
     logger.info("Bot started")
